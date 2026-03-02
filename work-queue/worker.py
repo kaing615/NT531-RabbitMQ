@@ -1,3 +1,4 @@
+#worker.py - RabbitMQ worker with prefetch=1 and manual ack
 #!/usr/bin/env python3
 import argparse
 import json
@@ -16,7 +17,9 @@ def parse_args():
 
     p.add_argument("--worker-id", default=os.getenv("WORKER_ID", "1"))
     p.add_argument("--sleep-ms", type=int, default=int(os.getenv("SLEEP_MS", "20")))
-    p.add_argument("--prefetch", type=int, default=1)
+    p.add_argument("--prefetch", type=int, default=int(os.getenv("PREFETCH", "1")))
+    p.add_argument("--queue-durable", type=int, default=int(os.getenv("QUEUE_DURABLE", "1")),
+               help="1=durable queue, 0=non-durable")
     p.add_argument("--log", default="", help="log file path (optional)")
     return p.parse_args()
 
@@ -36,7 +39,7 @@ def main():
     conn = pika.BlockingConnection(params)
     ch = conn.channel()
 
-    ch.queue_declare(queue=args.queue, durable=True)
+    ch.queue_declare(queue=args.queue, durable=bool(args.queue_durable))
     ch.basic_qos(prefetch_count=args.prefetch)
 
     sleep_s = args.sleep_ms / 1000.0
@@ -52,7 +55,7 @@ def main():
             sent_ts = float(msg.get("sent_ts", 0.0)) if msg.get("sent_ts") else 0.0
             net_latency_ms = (recv_ts - sent_ts) * 1000.0 if sent_ts > 0 else -1.0
 
-            time.sleep(sleep_s)  # simulate work
+            time.sleep(sleep_s)
             proc_ms = (time.perf_counter() - start) * 1000.0
 
             log_line(out, json.dumps({

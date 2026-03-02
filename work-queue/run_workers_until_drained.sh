@@ -1,8 +1,9 @@
+#run_workers_until_drained.sh - start N workers and wait until the queue is drained (ready=0 & unacked=0)
 #!/usr/bin/env bash
 set -euo pipefail
 
 # ===== Config (override bằng env nếu cần) =====
-WORK_DIR="${HOME}/work-queue"
+WORK_DIR="${WORK_DIR:-${HOME}/work-queue}"
 QUEUE_NAME="${QUEUE_NAME:-orders_queue}"
 
 RABBIT_HOST="${RABBIT_HOST:-127.0.0.1}"
@@ -14,12 +15,15 @@ SLEEP_MS="${SLEEP_MS:-20}"
 PREFETCH="${PREFETCH:-1}"
 
 CONTAINER_NAME="${CONTAINER_NAME:-mq-lab-rabbitmq-1}"
-CPU_LOG="${CPU_LOG:-cpu_rabbit.log}"
-CPU_DELAY="${CPU_DELAY:-10}"          # seconds before starting cpu log
-POLL_INTERVAL="${POLL_INTERVAL:-2}"   # seconds
-STABLE_ZERO_COUNT="${STABLE_ZERO_COUNT:-3}"  # cần 0 ổn định N lần liên tiếp
+CPU_DELAY="${CPU_DELAY:-3}"           # seconds before starting cpu log
+POLL_INTERVAL="${POLL_INTERVAL:-1}"   # seconds
+STABLE_ZERO_COUNT="${STABLE_ZERO_COUNT:-3}"
 
-PID_FILE="${WORK_DIR}/workers.pids"
+# NEW: mỗi run sẽ ghi log vào OUTPUT_DIR
+OUTPUT_DIR="${OUTPUT_DIR:-${WORK_DIR}/results/single-run}"
+CPU_LOG="${CPU_LOG:-${OUTPUT_DIR}/cpu_rabbit.log}"
+MEM_LOG="${MEM_LOG:-${OUTPUT_DIR}/mem_rabbit.log}"
+PID_FILE="${OUTPUT_DIR}/workers.pids"
 
 usage() {
   cat <<EOF
@@ -31,6 +35,7 @@ Stops automatically when:
   for STABLE_ZERO_COUNT consecutive polls.
 
 Env override (optional):
+  WORK_DIR, OUTPUT_DIR, CPU_LOG
   QUEUE_NAME, SLEEP_MS, PREFETCH
   CONTAINER_NAME, CPU_DELAY, POLL_INTERVAL, STABLE_ZERO_COUNT
 EOF
@@ -42,6 +47,7 @@ if [[ -z "${NUM_WORKERS}" || ! "${NUM_WORKERS}" =~ ^[0-9]+$ || "${NUM_WORKERS}" 
 fi
 
 mkdir -p "${WORK_DIR}"
+mkdir -p "${OUTPUT_DIR}"
 
 # Activate venv if exists
 if [[ -f "${WORK_DIR}/.venv/bin/activate" ]]; then
@@ -65,11 +71,12 @@ cleanup() {
   fi
 
   echo "== CPU avg/max from ${CPU_LOG} =="
-  python3 - <<'PY'
-import re, statistics as st
+  python3 - "$CPU_LOG" <<'PY'
+import re, statistics as st, sys
+cpu_log = sys.argv[1]
 vals=[]
 try:
-    for line in open("cpu_rabbit.log","r",encoding="utf-8"):
+    for line in open(cpu_log,"r",encoding="utf-8"):
         m=re.search(r"([\d.]+)%", line)
         if m: vals.append(float(m.group(1)))
 except FileNotFoundError:
@@ -83,22 +90,24 @@ else:
 PY
 
   echo "== Worker log lines (distribution) =="
-  wc -l "${WORK_DIR}"/w*.jsonl 2>/dev/null || true
+  wc -l "${OUTPUT_DIR}"/w*.jsonl 2>/dev/null || true
 }
 trap cleanup EXIT
 
-echo "== (1) Cleanup logs =="
-rm -f "${WORK_DIR}"/w*.jsonl || true
+echo "== (1) Cleanup run logs in ${OUTPUT_DIR} =="
+rm -f "${OUTPUT_DIR}"/w*.jsonl || true
 rm -f "${CPU_LOG}" || true
+rm -f "${MEM_LOG}" || true
 rm -f "${PID_FILE}" || true
 
-echo "== (2) Start ${NUM_WORKERS} workers (1..${NUM_WORKERS}) sleep=${SLEEP_MS}ms prefetch=${PREFETCH} =="
+echo "== (2) Start ${NUM_WORKERS} workers sleep=${SLEEP_MS}ms prefetch=${PREFETCH} =="
 for i in $(seq 1 "${NUM_WORKERS}"); do
-  LOG="${WORK_DIR}/w${i}.jsonl"
+  LOG="${OUTPUT_DIR}/w${i}.jsonl"
   python3 "${WORK_DIR}/worker.py" \
     --host "${RABBIT_HOST}" --port "${RABBIT_PORT}" \
     --user "${RABBIT_USER}" --password "${RABBIT_PASS}" \
     --queue "${QUEUE_NAME}" \
+    --queue-durable "${QUEUE_DURABLE}" \
     --worker-id "${i}" \
     --sleep-ms "${SLEEP_MS}" \
     --prefetch "${PREFETCH}" \
@@ -111,19 +120,17 @@ echo "PIDs saved to ${PID_FILE}"
 echo "== (3) Wait ${CPU_DELAY}s then start CPU sampling (until drained) =="
 sleep "${CPU_DELAY}"
 
-# CPU logger chạy nền cho tới khi drained
 (
   while true; do
     docker stats --no-stream --format "{{.Name}} {{.CPUPerc}}" "${CONTAINER_NAME}" >> "${CPU_LOG}" || true
+    docker stats --no-stream --format "{{.Name}} {{.MemUsage}}" "${CONTAINER_NAME}" >> "${MEM_LOG}" || true
     sleep 1
   done
 ) &
 CPU_PID="$!"
 echo "CPU logger PID: ${CPU_PID}"
 
-# Hàm đọc ready/unacked từ rabbitmqctl trong container
 get_ready_unacked() {
-  # Output dạng: "<ready> <unacked>"
   docker exec "${CONTAINER_NAME}" rabbitmqctl list_queues -q name messages_ready messages_unacknowledged 2>/dev/null \
     | awk -v q="${QUEUE_NAME}" '$1==q {print $2, $3; found=1} END{if(!found) print "0 0"}'
 }
