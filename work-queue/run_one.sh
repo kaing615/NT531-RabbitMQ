@@ -77,7 +77,7 @@ case "${MODE}" in
 esac
 
 # ===== Output =====
-TS="$(date '+%Y%m%d_%H%M%S')"
+TS="$(TZ=Asia/Ho_Chi_Minh date '+%Y%m%d_%H%M%S')"
 messages=$((RATE * RUN_SECONDS))
 run_tag="mode${MODE}_rate${RATE}_N${N}_pref${PREFETCH}_sz${SIZE}_t${RUN_SECONDS}"
 OUT_ROOT="${OUT_ROOT:-${WORK_DIR}/results/${TS}}"

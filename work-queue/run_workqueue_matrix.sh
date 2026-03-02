@@ -31,7 +31,7 @@ STABLE_ZERO_COUNT="${STABLE_ZERO_COUNT:-3}"
 # C: durable queue, persistent msg, confirms ON
 MODES=(${MODES:-A B C})
 
-TS="$(date '+%Y%m%d_%H%M%S')"
+TS="$(TZ=Asia/Ho_Chi_Minh date '+%Y%m%d_%H%M%S')"
 OUT_ROOT="${OUT_ROOT:-${WORK_DIR}/results/${TS}}"
 RESULT_CSV="${RESULT_CSV:-${OUT_ROOT}/summary.csv}"
 mkdir -p "${OUT_ROOT}"

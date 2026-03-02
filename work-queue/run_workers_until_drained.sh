@@ -142,7 +142,7 @@ while true; do
   ready="${ready:-0}"
   unacked="${unacked:-0}"
 
-  ts="$(date '+%H:%M:%S')"
+  ts="$(TZ=Asia/Ho_Chi_Minh date '+%Y%m%d_%H%M%S')"
   echo "[${ts}] ready=${ready} unacked=${unacked}"
 
   if [[ "${ready}" == "0" && "${unacked}" == "0" ]]; then
