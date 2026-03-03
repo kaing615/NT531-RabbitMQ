@@ -43,6 +43,8 @@ def main():
     run_id = uuid.uuid4().hex[:10]
     t0 = time.perf_counter()
 
+    confirm_fail = 0
+
     for i in range(args.messages):
         payload = {
             "run_id": run_id,
@@ -55,7 +57,7 @@ def main():
         if args.confirm:
             ok = ch.basic_publish(exchange=args.exchange, routing_key="", body=body, properties=props)
             if not ok:
-                raise RuntimeError("Publish not confirmed.")
+               confirm_fail += 1
         else:
             ch.basic_publish(exchange=args.exchange, routing_key="", body=body, properties=props)
 
@@ -82,6 +84,7 @@ def main():
     print(f"run_id: {run_id}")
     print(f"duration_sec: {dur:.4f}")
     print(f"throughput_msg_per_sec: {thr:.2f}")
+    print(f"confirm_fail: {confirm_fail}")
 
     conn.close()
 

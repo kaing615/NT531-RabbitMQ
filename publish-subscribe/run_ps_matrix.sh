@@ -53,7 +53,7 @@ get_ready_unacked() {
     | awk -v q="${q}" '$1==q {print $2, $3; found=1} END{if(!found) print "0 0"}'
 }
 
-echo "mode,rate,M,prefetch,payload_bytes,thr_s1,thr_s2,thr_s3,thr_total,p95_s1,p95_s2,p95_s3,p95_total,goodput_MBps,cpu_avg_pct,cpu_max_pct,mem_avg_mib,mem_max_mib,exchange,queues,run_tag" \
+echo "mode,rate,M,prefetch,payload_bytes,thr_s1,thr_s2,thr_s3,thr_total,p95_s1,p95_s2,p95_s3,p95_total,goodput_MBps,cpu_avg_pct,cpu_max_pct,mem_avg_mib,mem_max_mib,confirm_fail,exchange,queues,run_tag" \
   > "${RESULT_CSV}"
 
 for mode in "${MODES[@]}"; do
@@ -91,7 +91,7 @@ for mode in "${MODES[@]}"; do
             --prefetch "${prefetch}" --sleep-ms "${SLEEP_MS}" \
             --log "${run_dir}/s${i}.jsonl" \
             --queue-durable "${Q_DUR}" --exchange-durable "${EX_DUR}" \
-            >/dev/null 2>&1 &
+            > "${run_dir}/sub${i}.out.log" 2>&1 &
           pids+=("$!")
         done
 
@@ -117,7 +117,9 @@ for mode in "${MODES[@]}"; do
         )"
         rc=$?
         set -e
-        echo "${producer_out}" > "${run_dir}/producer_stdout.log"
+        echo "${producer_out}" | tee "${run_dir}/producer_stdout.log" >/dev/null
+        confirm_fail="$(echo "${producer_out}" | awk -F': ' '/^confirm_fail:/ {print $2}' | tail -n1)"
+        confirm_fail="${confirm_fail:-0}"
         if [[ "${rc}" -ne 0 ]]; then
           echo "Producer failed rc=${rc}. See ${run_dir}/producer_stdout.log"
           kill "${stat_pid}" 2>/dev/null || true
@@ -138,6 +140,10 @@ for mode in "${MODES[@]}"; do
             all_u=$((all_u + u))
             if [[ "${r}" != "0" || "${u}" != "0" ]]; then any=1; fi
           done
+
+          ts="$(date '+%H:%M:%S')"
+          echo "[${ts}] ${run_tag} ready=${all_r} unacked=${all_u}"
+
           if [[ "${any}" == "1" ]]; then seen=1; fi
 
           if [[ "${seen}" == "1" && "${all_r}" == "0" && "${all_u}" == "0" ]]; then
@@ -163,8 +169,8 @@ for mode in "${MODES[@]}"; do
             --payload-bytes "${size}"
         )"
 
-        echo "${mode},${rate},${M},${prefetch},${size},${metrics},${EXCHANGE},${queues},${run_tag}" \
-          >> "${RESULT_CSV}"
+        echo "${mode},${rate},${M},${prefetch},${size},${metrics},${confirm_fail},${EXCHANGE},${queues},${run_tag}" \
+            >> "${RESULT_CSV}"
 
       done
     done

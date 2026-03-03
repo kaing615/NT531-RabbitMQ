@@ -119,7 +119,7 @@ for i in $(seq 1 "${M}"); do
     --prefetch "${PREFETCH}" --sleep-ms "${SLEEP_MS}" \
     --log "${RUN_DIR}/s${i}.jsonl" \
     --queue-durable "${Q_DUR}" --exchange-durable "${EX_DUR}" \
-    >/dev/null 2>&1 &
+    > "${run_dir}/sub${i}.out.log" 2>&1 &
   pids+=("$!")
 done
 
@@ -145,7 +145,7 @@ producer_out="$(
 )"
 rc=$?
 set -e
-echo "${producer_out}" > "${RUN_DIR}/producer_stdout.log"
+echo "${producer_out}" | tee "${run_dir}/producer_stdout.log" >/dev/null
 if [[ "${rc}" -ne 0 ]]; then
   echo "Producer failed rc=${rc}. See ${RUN_DIR}/producer_stdout.log"
   kill "${STAT_PID}" 2>/dev/null || true
