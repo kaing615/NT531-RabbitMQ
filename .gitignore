@@ -8,3 +8,6 @@ __pycache__/
 ~$*.docx
 ~$*.pptx
 ~$*.xlsx
+
+results*/
+ps_mode*_figs/

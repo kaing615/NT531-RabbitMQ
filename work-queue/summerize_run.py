@@ -93,7 +93,6 @@ def parse_mem_log(mem_log: str):
     try:
         with open(mem_log, "r", encoding="utf-8") as f:
             for line in f:
-                # find "123.4MiB"
                 m = re.search(r"([\d.]+)\s*(B|KiB|MiB|GiB)", line)
                 if m:
                     samples.append(to_mib(float(m.group(1)), m.group(2)))
@@ -116,7 +115,6 @@ def main():
     cpu_avg, cpu_max = parse_cpu_log(os.path.join(args.run_dir, args.cpu_log))
     mem_avg, mem_max = parse_mem_log(os.path.join(args.run_dir, args.mem_log))
 
-    # Print as single line CSV-friendly values (no header)
     print(
         f"{w['throughput_msgps']:.2f},"
         f"{w['lat_avg_ms']:.2f},"
