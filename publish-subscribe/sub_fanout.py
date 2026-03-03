@@ -11,6 +11,8 @@ def parse_args():
 
     p.add_argument("--exchange", default=os.getenv("EXCHANGE_NAME", "broadcast_x"))
     p.add_argument("--queue", default=os.getenv("QUEUE_NAME", "subq_1"))
+    p.add_argument("--queue-durable", type=int, default=int(os.getenv("QUEUE_DURABLE", "1")))
+    p.add_argument("--exchange-durable", type=int, default=int(os.getenv("EXCHANGE_DURABLE", "1")))
     p.add_argument("--sub-id", default=os.getenv("SUB_ID", "1"))
 
     p.add_argument("--sleep-ms", type=int, default=int(os.getenv("SLEEP_MS", "20")))
@@ -34,8 +36,8 @@ def main():
     conn = pika.BlockingConnection(params)
     ch = conn.channel()
 
-    ch.exchange_declare(exchange=args.exchange, exchange_type="fanout", durable=True)
-    ch.queue_declare(queue=args.queue, durable=True)
+    ch.exchange_declare(exchange=args.exchange, exchange_type="fanout", durable=bool(args.exchange_durable))
+    ch.queue_declare(queue=args.queue, durable=bool(args.queue_durable))
     ch.queue_bind(queue=args.queue, exchange=args.exchange)
 
     ch.basic_qos(prefetch_count=args.prefetch)

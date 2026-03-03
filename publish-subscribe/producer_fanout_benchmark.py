@@ -13,6 +13,7 @@ def parse_args():
     p.add_argument("-n", "--messages", type=int, default=30000)
     p.add_argument("--payload-bytes", type=int, default=256)
     p.add_argument("--rate", type=float, default=0.0, help="msg/s (0=unlimited)")
+    p.add_argument("--durable", action="store_true", help="declare durable exchange")
     p.add_argument("--persistent", action="store_true")
     p.add_argument("--confirm", action="store_true")
     return p.parse_args()
@@ -27,7 +28,7 @@ def main():
     conn = pika.BlockingConnection(params)
     ch = conn.channel()
 
-    ch.exchange_declare(exchange=args.exchange, exchange_type="fanout", durable=True)
+    ch.exchange_declare(exchange=args.exchange, exchange_type="fanout", durable=args.durable)
 
     if args.confirm:
         ch.confirm_delivery()
