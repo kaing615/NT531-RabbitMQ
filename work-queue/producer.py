@@ -51,6 +51,7 @@ def main():
     next_send = time.perf_counter()
 
     run_id = uuid.uuid4().hex[:10]
+    confirm_fail = 0
 
     t0 = time.perf_counter()
     for i in range(args.messages):
@@ -71,7 +72,8 @@ def main():
                 mandatory=False,
             )
             if not ok:
-                raise RuntimeError("Publish not confirmed (returned False).")
+                # Do NOT crash whole run; count confirm failures for reporting
+                confirm_fail += 1
         else:
             ch.basic_publish(
                 exchange="",
@@ -104,6 +106,7 @@ def main():
     print(f"run_id: {run_id}")
     print(f"duration_sec: {duration:.4f}")
     print(f"throughput_msg_per_sec: {throughput:.2f}")
+    print(f"confirm_fail: {confirm_fail}")
 
     conn.close()
 

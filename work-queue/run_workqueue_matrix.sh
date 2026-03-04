@@ -14,11 +14,11 @@ WORKER_RUNNER="${WORKER_RUNNER:-${WORK_DIR}/run_workers_until_drained.sh}"
 SUMMARIZER="${SUMMARIZER:-${WORK_DIR}/summarize_run.py}"
 
 # ===== matrix =====
-RATES=(${RATES:-500 1000})
+RATES=(${RATES:-500 1000 2000})
 WORKERS_LIST=(${WORKERS_LIST:-1 2 4})
 PREFETCH_LIST=(${PREFETCH_LIST:-1 5 10})
 SIZES=(${SIZES:-1024 10240})   # bytes
-RUN_SECONDS="${RUN_SECONDS:-30}"
+RUN_SECONDS="${RUN_SECONDS:-20}"
 SLEEP_MS="${SLEEP_MS:-20}"
 
 CPU_DELAY="${CPU_DELAY:-3}"
@@ -62,7 +62,7 @@ mode_cfg() {
   esac
 }
 
-echo "mode,rate,N,throughput_msgps,latency_avg_ms,latency_p95_ms,cpu_avg_pct,cpu_max_pct,mem_avg_mib,mem_max_mib,acked_count,worker_duration_s,prefetch,payload_bytes,queue,run_tag" \
+echo "mode,rate,N,throughput_msgps,latency_avg_ms,latency_p95_ms,cpu_avg_pct,cpu_max_pct,mem_avg_mib,mem_max_mib,acked_count,worker_duration_s,prefetch,payload_bytes,confirm_fail,queue,run_tag" \
   > "${RESULT_CSV}"
 
 for mode in "${MODES[@]}"; do
@@ -127,6 +127,9 @@ for mode in "${MODES[@]}"; do
             continue
           fi
 
+          confirm_fail="$(echo "${producer_out}" | awk -F': ' '/^confirm_fail:/ {print $2}' | tail -n1)"
+          confirm_fail="${confirm_fail:-0}"
+
           # 3) wait drained
           wait "${workers_pid}" || true
 
@@ -139,7 +142,7 @@ for mode in "${MODES[@]}"; do
               --mem-log "mem_rabbit.log"
           )"
 
-          echo "${mode},${rate},${n},${metrics},${prefetch},${size},${queue_name},${run_tag}" \
+          echo "${mode},${rate},${n},${metrics},${prefetch},${size},${confirm_fail},${queue_name},${run_tag}" \
             >> "${RESULT_CSV}"
 
         done

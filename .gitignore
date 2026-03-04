@@ -11,3 +11,5 @@ __pycache__/
 
 results*/
 ps_mode*_figs/
+*.csv
+chart.py
