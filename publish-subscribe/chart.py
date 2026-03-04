@@ -3,16 +3,15 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 # ====== CONFIG ======
-CSV_PATH = "/Users/dtam.21/Code/NT531/publish-subscribe/results-a/summary.csv"          # đổi path nếu file nằm chỗ khác
-OUT_DIR = Path("ps_modeA_figs")   # folder chứa ảnh xuất ra
+CSV_PATH = "/Users/dtam.21/Code/NT531/publish-subscribe/results-b/summary.csv"          # đổi path nếu file nằm chỗ khác
+OUT_DIR = Path("ps_modeB_figs")   # folder chứa ảnh xuất ra
 OUT_DIR.mkdir(parents=True, exist_ok=True)
-
+    
 # ====== LOAD DATA ======
 df = pd.read_csv(CSV_PATH)
 
-# chỉ lấy Mode A (nếu file có nhiều mode)
 if "mode" in df.columns:
-    df = df[df["mode"].astype(str).str.strip().str.upper() == "A"].copy()
+    df = df[df["mode"].astype(str).str.strip().str.upper() == "B"].copy()
 
 # ép kiểu số (tránh Pivot/Excel bị text)
 for c in ["rate", "prefetch", "payload_bytes", "thr_total", "p95_total", "cpu_avg_pct"]:
@@ -31,7 +30,7 @@ def plot_thr_total(payload_bytes: int, out_name: str):
         plt.plot(s["rate"], s["thr_total"], marker="o", label=f"prefetch={int(pref)}")
     plt.xlabel("Publish rate (msg/s)")
     plt.ylabel("Throughput total thr_total (msg/s)")
-    plt.title(f"Mode A Fanout: thr_total vs rate (payload={payload_bytes} bytes)")
+    plt.title(f"Mode B Fanout: thr_total vs rate (payload={payload_bytes} bytes)")
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
@@ -46,7 +45,7 @@ def plot_p95_total(payload_bytes: int, out_name: str):
         plt.plot(s["rate"], s["p95_total_s"], marker="o", label=f"prefetch={int(pref)}")
     plt.xlabel("Publish rate (msg/s)")
     plt.ylabel("p95_total (seconds)")
-    plt.title(f"Mode A Fanout: p95_total vs rate (payload={payload_bytes} bytes)")
+    plt.title(f"Mode B Fanout: p95_total vs rate (payload={payload_bytes} bytes)")
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
@@ -61,7 +60,7 @@ def plot_cpu_avg(payload_bytes: int, out_name: str):
         plt.plot(s["rate"], s["cpu_avg_pct"], marker="o", label=f"prefetch={int(pref)}")
     plt.xlabel("Publish rate (msg/s)")
     plt.ylabel("CPU avg (%)")
-    plt.title(f"Mode A Fanout: CPU avg vs rate (payload={payload_bytes} bytes)")
+    plt.title(f"Mode B Fanout: CPU avg vs rate (payload={payload_bytes} bytes)")
     plt.grid(True)
     plt.legend()
     plt.tight_layout()
