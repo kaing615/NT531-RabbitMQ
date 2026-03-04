@@ -129,6 +129,10 @@ for mode in "${MODES[@]}"; do
 
         seen=0
         zero_ok=0
+
+        TS_CSV="${run_dir}/queue_ts.csv"
+        echo "ts_iso,ts_epoch,ready_total,unacked_total,total" > "${TS_CSV}"
+
         while true; do
           any=0
           all_r=0
@@ -141,8 +145,12 @@ for mode in "${MODES[@]}"; do
             if [[ "${r}" != "0" || "${u}" != "0" ]]; then any=1; fi
           done
 
-          ts="$(date '+%H:%M:%S')"
-          echo "[${ts}] ${run_tag} ready=${all_r} unacked=${all_u}"
+          ts_iso="$(TZ=Asia/Ho_Chi_Minh date '+%Y-%m-%d %H:%M:%S')"
+          ts_epoch="$(date +%s)"
+          total=$((all_r + all_u))
+          
+          echo "[${ts_iso}] ${run_tag} ready=${all_r} unacked=${all_u}"
+          echo "${ts_iso},${ts_epoch},${all_r},${all_u},${total}" >> "${TS_CSV}"
 
           if [[ "${any}" == "1" ]]; then seen=1; fi
 
