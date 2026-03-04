@@ -59,7 +59,7 @@ QUEUE_NAME=""
 case "${MODE}" in
   A)
     QUEUE_DURABLE="0"
-    PRODUCER_FLAGS=""   # non-durable queue, non-persistent msg, confirms off
+    PRODUCER_FLAGS=""
     QUEUE_NAME="${QUEUE_BASE}_A"
     ;;
   B)
@@ -143,6 +143,10 @@ if [[ "${rc}" -ne 0 ]]; then
   exit 1
 fi
 
+# Parse confirm_fail (producer.py đã print "confirm_fail: X")
+confirm_fail="$(echo "${producer_out}" | awk -F': ' '/^confirm_fail:/ {print $2}' | tail -n1)"
+confirm_fail="${confirm_fail:-0}"
+
 # Wait drained
 wait "${workers_pid}" || true
 
@@ -157,11 +161,11 @@ metrics="$(
 
 SUMMARY_CSV="${OUT_ROOT}/summary.csv"
 if [[ ! -f "${SUMMARY_CSV}" ]]; then
-  echo "mode,rate,N,throughput_msgps,latency_avg_ms,latency_p95_ms,cpu_avg_pct,cpu_max_pct,mem_avg_mib,mem_max_mib,acked_count,worker_duration_s,prefetch,payload_bytes,queue,run_tag" \
+  echo "mode,rate,N,throughput_msgps,latency_avg_ms,latency_p95_ms,cpu_avg_pct,cpu_max_pct,mem_avg_mib,mem_max_mib,acked_count,worker_duration_s,prefetch,payload_bytes,confirm_fail,queue,run_tag" \
     > "${SUMMARY_CSV}"
 fi
 
-echo "${MODE},${RATE},${N},${metrics},${PREFETCH},${SIZE},${QUEUE_NAME},${run_tag}" \
+echo "${MODE},${RATE},${N},${metrics},${PREFETCH},${SIZE},${confirm_fail},${QUEUE_NAME},${run_tag}" \
   | tee -a "${SUMMARY_CSV}"
 
 echo

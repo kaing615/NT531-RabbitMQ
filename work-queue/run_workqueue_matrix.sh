@@ -74,7 +74,7 @@ for mode in "${MODES[@]}"; do
         for size in "${SIZES[@]}"; do
 
           messages=$((rate * RUN_SECONDS))
-          run_tag="mode${mode}_rate${rate}_N${n}_pref${prefetch}_sz${size}"
+          run_tag="mode${mode}_rate${rate}_N${n}_pref${prefetch}_sz${size}_t${RUN_SECONDS}"
           run_dir="${OUT_ROOT}/${run_tag}"
           mkdir -p "${run_dir}"
 
