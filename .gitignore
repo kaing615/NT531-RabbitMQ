@@ -10,6 +10,6 @@ __pycache__/
 ~$*.xlsx
 
 results*/
-ps_mode*_figs/
+ps_*/
 *.csv
 chart.py
