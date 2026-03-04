@@ -1,3 +1,4 @@
+#python3 chart.py --csv /Users/dtam.21/Code/NT531/publish-subscribe/rs_summary.csv --out ps_figs_by_mode
 import argparse
 from pathlib import Path
 
