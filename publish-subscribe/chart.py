@@ -1,77 +1,141 @@
-import pandas as pd
-import matplotlib.pyplot as plt
+import argparse
 from pathlib import Path
 
-# ====== CONFIG ======
-CSV_PATH = "/Users/dtam.21/Code/NT531/publish-subscribe/results-b/summary.csv"          # đổi path nếu file nằm chỗ khác
-OUT_DIR = Path("ps_modeB_figs")   # folder chứa ảnh xuất ra
-OUT_DIR.mkdir(parents=True, exist_ok=True)
-    
-# ====== LOAD DATA ======
-df = pd.read_csv(CSV_PATH)
+import pandas as pd
+import matplotlib.pyplot as plt
 
-if "mode" in df.columns:
-    df = df[df["mode"].astype(str).str.strip().str.upper() == "B"].copy()
 
-# ép kiểu số (tránh Pivot/Excel bị text)
-for c in ["rate", "prefetch", "payload_bytes", "thr_total", "p95_total", "cpu_avg_pct"]:
-    if c in df.columns:
-        df[c] = pd.to_numeric(df[c], errors="coerce")
-
-# đổi p95_total từ ms -> s cho dễ nhìn (vì bạn đang có p95 rất lớn)
-df["p95_total_s"] = df["p95_total"] / 1000.0
-
-# ====== PLOT HELPERS ======
-def plot_thr_total(payload_bytes: int, out_name: str):
+# ---------- Plot helpers ----------
+def _plot_lines_by_prefetch(
+    df_mode_payload: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    title: str,
+    xlabel: str,
+    ylabel: str,
+    out_path: Path,
+):
     plt.figure()
-    sub = df[df["payload_bytes"] == payload_bytes]
-    for pref in sorted(sub["prefetch"].dropna().unique()):
-        s = sub[sub["prefetch"] == pref].sort_values("rate")
-        plt.plot(s["rate"], s["thr_total"], marker="o", label=f"prefetch={int(pref)}")
-    plt.xlabel("Publish rate (msg/s)")
-    plt.ylabel("Throughput total thr_total (msg/s)")
-    plt.title(f"Mode B Fanout: thr_total vs rate (payload={payload_bytes} bytes)")
-    plt.grid(True)
+    for pref in sorted(df_mode_payload["prefetch"].dropna().unique()):
+        s = df_mode_payload[df_mode_payload["prefetch"] == pref].sort_values(x_col)
+        plt.plot(s[x_col], s[y_col], marker="o", label=f"prefetch={int(pref)}")
+
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.title(title)
+    plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(OUT_DIR / out_name, dpi=200)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    plt.savefig(out_path, dpi=200)
     plt.close()
 
-def plot_p95_total(payload_bytes: int, out_name: str):
-    plt.figure()
-    sub = df[df["payload_bytes"] == payload_bytes]
-    for pref in sorted(sub["prefetch"].dropna().unique()):
-        s = sub[sub["prefetch"] == pref].sort_values("rate")
-        plt.plot(s["rate"], s["p95_total_s"], marker="o", label=f"prefetch={int(pref)}")
-    plt.xlabel("Publish rate (msg/s)")
-    plt.ylabel("p95_total (seconds)")
-    plt.title(f"Mode B Fanout: p95_total vs rate (payload={payload_bytes} bytes)")
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(OUT_DIR / out_name, dpi=200)
-    plt.close()
 
-def plot_cpu_avg(payload_bytes: int, out_name: str):
-    plt.figure()
-    sub = df[df["payload_bytes"] == payload_bytes]
-    for pref in sorted(sub["prefetch"].dropna().unique()):
-        s = sub[sub["prefetch"] == pref].sort_values("rate")
-        plt.plot(s["rate"], s["cpu_avg_pct"], marker="o", label=f"prefetch={int(pref)}")
-    plt.xlabel("Publish rate (msg/s)")
-    plt.ylabel("CPU avg (%)")
-    plt.title(f"Mode B Fanout: CPU avg vs rate (payload={payload_bytes} bytes)")
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig(OUT_DIR / out_name, dpi=200)
-    plt.close()
+def generate_mode_figs(df: pd.DataFrame, mode: str, out_dir: Path):
+    d = df[df["mode"].astype(str).str.strip().str.upper() == mode].copy()
+    if d.empty:
+        return
 
-# ====== GENERATE 5 FIGURES ======
-plot_thr_total(1024,  "fig1_thr_total_rate_payload1KB.png")
-plot_thr_total(10240, "fig2_thr_total_rate_payload10KB.png")
-plot_p95_total(1024,  "fig3_p95_total_rate_payload1KB.png")
-plot_p95_total(10240, "fig4_p95_total_rate_payload10KB.png")
-plot_cpu_avg(1024,    "fig5_cpu_avg_rate_payload1KB.png")
+    payloads = sorted(d["payload_bytes"].dropna().unique())
 
-print("DONE. Images saved in:", OUT_DIR.resolve())
+    # thr_total
+    for payload in payloads:
+        dp = d[d["payload_bytes"] == payload]
+        _plot_lines_by_prefetch(
+            dp,
+            x_col="rate",
+            y_col="thr_total",
+            title=f"Mode {mode} Fanout: thr_total vs rate (payload={int(payload)} bytes)",
+            xlabel="Publish rate (msg/s)",
+            ylabel="Throughput total thr_total (msg/s)",
+            out_path=out_dir / f"thr_total_payload{int(payload)}.png",
+        )
+
+    # p95_total (ms -> seconds)
+    d["p95_total_s"] = d["p95_total"] / 1000.0
+    for payload in payloads:
+        dp = d[d["payload_bytes"] == payload]
+        _plot_lines_by_prefetch(
+            dp,
+            x_col="rate",
+            y_col="p95_total_s",
+            title=f"Mode {mode} Fanout: p95_total vs rate (payload={int(payload)} bytes)",
+            xlabel="Publish rate (msg/s)",
+            ylabel="p95_total (seconds)",
+            out_path=out_dir / f"p95_total_payload{int(payload)}.png",
+        )
+
+    # cpu_avg
+    for payload in payloads:
+        dp = d[d["payload_bytes"] == payload]
+        _plot_lines_by_prefetch(
+            dp,
+            x_col="rate",
+            y_col="cpu_avg_pct",
+            title=f"Mode {mode} Fanout: CPU avg vs rate (payload={int(payload)} bytes)",
+            xlabel="Publish rate (msg/s)",
+            ylabel="CPU avg (%)",
+            out_path=out_dir / f"cpu_avg_payload{int(payload)}.png",
+        )
+
+    # Optional: goodput + mem (nếu có cột)
+    if "goodput_MBps" in d.columns:
+        for payload in payloads:
+            dp = d[d["payload_bytes"] == payload]
+            _plot_lines_by_prefetch(
+                dp,
+                x_col="rate",
+                y_col="goodput_MBps",
+                title=f"Mode {mode} Fanout: Goodput vs rate (payload={int(payload)} bytes)",
+                xlabel="Publish rate (msg/s)",
+                ylabel="Goodput (MB/s)",
+                out_path=out_dir / f"goodput_payload{int(payload)}.png",
+            )
+
+    if "mem_avg_mib" in d.columns:
+        for payload in payloads:
+            dp = d[d["payload_bytes"] == payload]
+            _plot_lines_by_prefetch(
+                dp,
+                x_col="rate",
+                y_col="mem_avg_mib",
+                title=f"Mode {mode} Fanout: RAM avg vs rate (payload={int(payload)} bytes)",
+                xlabel="Publish rate (msg/s)",
+                ylabel="RAM avg (MiB)",
+                out_path=out_dir / f"mem_avg_payload{int(payload)}.png",
+            )
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--csv", required=True, help="Path to summary.csv")
+    ap.add_argument("--out", default="ps_figs_by_mode", help="Output root folder")
+    args = ap.parse_args()
+
+    csv_path = Path(args.csv)
+    out_root = Path(args.out)
+
+    df = pd.read_csv(csv_path)
+
+    # Ensure numeric columns
+    num_cols = ["rate", "prefetch", "payload_bytes", "thr_total", "p95_total", "cpu_avg_pct", "goodput_MBps", "mem_avg_mib"]
+    for c in num_cols:
+        if c in df.columns:
+            df[c] = pd.to_numeric(df[c], errors="coerce")
+
+    # Detect modes
+    if "mode" not in df.columns:
+        raise ValueError("summary.csv does not have 'mode' column")
+
+    modes = sorted(df["mode"].dropna().astype(str).str.strip().str.upper().unique().tolist())
+    print("Detected modes:", modes)
+
+    for mode in modes:
+        mode_dir = out_root / f"mode{mode}"
+        generate_mode_figs(df, mode, mode_dir)
+
+    print("DONE. Images saved in:", out_root.resolve())
+
+
+if __name__ == "__main__":
+    main()
