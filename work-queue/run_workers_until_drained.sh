@@ -136,14 +136,22 @@ get_ready_unacked() {
 }
 
 echo "== (4) Waiting until queue drained: ready=0 and unacked=0 (stable ${STABLE_ZERO_COUNT} polls) =="
+
+TS_CSV="${OUTPUT_DIR}/queue_ts.csv"
+echo "ts_iso,ts_epoch,ready,unacked,total" > "${TS_CSV}"
+
 zero_ok=0
 while true; do
   read -r ready unacked < <(get_ready_unacked)
   ready="${ready:-0}"
   unacked="${unacked:-0}"
 
-  ts="$(TZ=Asia/Ho_Chi_Minh date '+%Y%m%d_%H%M%S')"
-  echo "[${ts}] ready=${ready} unacked=${unacked}"
+  ts_iso="$(TZ=Asia/Ho_Chi_Minh date '+%Y-%m-%d %H:%M:%S')"
+  ts_epoch="$(date +%s)"
+  total=$((ready + unacked))
+
+  echo "[${ts_iso}] ready=${ready} unacked=${unacked}"
+  echo "${ts_iso},${ts_epoch},${ready},${unacked},${total}" >> "${TS_CSV}"
 
   if [[ "${ready}" == "0" && "${unacked}" == "0" ]]; then
     zero_ok=$((zero_ok+1))
