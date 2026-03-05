@@ -13,3 +13,7 @@ results*/
 ps_*/
 *.csv
 chart.py
+queue_*/
+figs_*/
+
+plot_*.py

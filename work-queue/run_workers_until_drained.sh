@@ -117,6 +117,9 @@ for i in $(seq 1 "${NUM_WORKERS}"); do
 done
 echo "PIDs saved to ${PID_FILE}"
 
+TS_CSV="${OUTPUT_DIR}/queue_ts.csv"
+echo "ts_iso,ts_epoch,ready,unacked,total" > "${TS_CSV}"
+
 echo "== (3) Wait ${CPU_DELAY}s then start CPU sampling (until drained) =="
 sleep "${CPU_DELAY}"
 
@@ -136,9 +139,6 @@ get_ready_unacked() {
 }
 
 echo "== (4) Waiting until queue drained: ready=0 and unacked=0 (stable ${STABLE_ZERO_COUNT} polls) =="
-
-TS_CSV="${OUTPUT_DIR}/queue_ts.csv"
-echo "ts_iso,ts_epoch,ready,unacked,total" > "${TS_CSV}"
 
 zero_ok=0
 while true; do
