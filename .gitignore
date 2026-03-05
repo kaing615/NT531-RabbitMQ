@@ -12,6 +12,7 @@ __pycache__/
 results*/
 ps_*/
 *.csv
+*.xlsx
 chart.py
 queue_*/
 figs_*/
