@@ -83,6 +83,7 @@ mkdir -p "${RUN_DIR}"
 
 CPU_LOG="${RUN_DIR}/cpu_rabbit.log"
 MEM_LOG="${RUN_DIR}/mem_rabbit.log"
+TS_CSV="${RUN_DIR}/queue_ts.csv"
 
 echo "=== PUBSUB ONE RUN ==="
 echo "run_tag:   ${run_tag}"
@@ -99,11 +100,21 @@ echo
 purge_queue() {
   docker exec "${CONTAINER_NAME}" rabbitmqctl purge_queue "$1" >/dev/null 2>&1 || true
 }
+
 get_ready_unacked() {
   local q="$1"
   docker exec "${CONTAINER_NAME}" rabbitmqctl list_queues -q name messages_ready messages_unacknowledged 2>/dev/null \
     | awk -v q="${q}" '$1==q {print $2, $3; found=1} END{if(!found) print "0 0"}'
 }
+
+cleanup() {
+  kill "${STAT_PID:-}" 2>/dev/null || true
+  kill "${PROD_PID:-}" 2>/dev/null || true
+  for pid in "${pids[@]:-}"; do
+    kill "${pid}" 2>/dev/null || true
+  done
+}
+trap cleanup EXIT
 
 for i in $(seq 1 "${M}"); do
   purge_queue "${QBASE}_${i}"
@@ -119,11 +130,12 @@ for i in $(seq 1 "${M}"); do
     --prefetch "${PREFETCH}" --sleep-ms "${SLEEP_MS}" \
     --log "${RUN_DIR}/s${i}.jsonl" \
     --queue-durable "${Q_DUR}" --exchange-durable "${EX_DUR}" \
-    > "${run_dir}/sub${i}.out.log" 2>&1 &
+    > "${RUN_DIR}/sub${i}.out.log" 2>&1 &
   pids+=("$!")
 done
 
 sleep "${CPU_DELAY}"
+
 (
   while true; do
     docker stats --no-stream --format "{{.Name}} {{.CPUPerc}}" "${CONTAINER_NAME}" >> "${CPU_LOG}" || true
@@ -133,62 +145,79 @@ sleep "${CPU_DELAY}"
 ) &
 STAT_PID=$!
 
-set +e
-producer_out="$(
-  python3 "${PRODUCER}" \
-    --host "${RABBIT_HOST}" --port "${RABBIT_PORT}" \
-    --user "${RABBIT_USER}" --password "${RABBIT_PASS}" \
-    --exchange "${EXCHANGE}" \
-    -n "${messages}" --payload-bytes "${SIZE}" --rate "${RATE}" \
-    ${PRODUCER_FLAGS} \
-    2>&1
-)"
-rc=$?
-set -e
-echo "${producer_out}" | tee "${run_dir}/producer_stdout.log" >/dev/null
-if [[ "${rc}" -ne 0 ]]; then
-  echo "Producer failed rc=${rc}. See ${RUN_DIR}/producer_stdout.log"
-  kill "${STAT_PID}" 2>/dev/null || true
-  for pid in "${pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
-  exit 1
-fi
+echo "ts_iso,ts_epoch,ready_total,unacked_total,total,producer_alive" > "${TS_CSV}"
 
-# wait drained all queues (ready+unacked)
+set +e
+python3 "${PRODUCER}" \
+  --host "${RABBIT_HOST}" --port "${RABBIT_PORT}" \
+  --user "${RABBIT_USER}" --password "${RABBIT_PASS}" \
+  --exchange "${EXCHANGE}" \
+  -n "${messages}" --payload-bytes "${SIZE}" --rate "${RATE}" \
+  ${PRODUCER_FLAGS} \
+  > "${RUN_DIR}/producer_stdout.log" 2>&1 &
+PROD_PID=$!
+set -e
+
 seen=0
 zero_ok=0
+
 while true; do
-  any=0
   all_r=0
   all_u=0
+  any=0
+
   for i in $(seq 1 "${M}"); do
     q="${QBASE}_${i}"
     read -r r u < <(get_ready_unacked "${q}")
-    r="${r:-0}"; u="${u:-0}"
+    r="${r:-0}"
+    u="${u:-0}"
     all_r=$((all_r + r))
     all_u=$((all_u + u))
-    if [[ "${r}" != "0" || "${u}" != "0" ]]; then any=1; fi
+    if [[ "${r}" != "0" || "${u}" != "0" ]]; then
+      any=1
+    fi
   done
-  if [[ "${any}" == "1" ]]; then seen=1; fi
 
-  ts="$(date '+%H:%M:%S')"
-  echo "[${ts}] total_ready=${all_r} total_unacked=${all_u}"
+  total=$((all_r + all_u))
+  ts_iso="$(TZ=Asia/Ho_Chi_Minh date '+%Y-%m-%d %H:%M:%S')"
+  ts_epoch="$(date +%s)"
 
-  if [[ "${seen}" == "1" && "${all_r}" == "0" && "${all_u}" == "0" ]]; then
-    zero_ok=$((zero_ok+1))
+  if kill -0 "${PROD_PID}" 2>/dev/null; then
+    producer_alive=1
+  else
+    producer_alive=0
+  fi
+
+  echo "[${ts_iso}] producer_alive=${producer_alive} total_ready=${all_r} total_unacked=${all_u} total=${total}"
+  echo "${ts_iso},${ts_epoch},${all_r},${all_u},${total},${producer_alive}" >> "${TS_CSV}"
+
+  if [[ "${any}" == "1" ]]; then
+    seen=1
+  fi
+
+  if [[ "${producer_alive}" == "0" && "${seen}" == "1" && "${all_r}" == "0" && "${all_u}" == "0" ]]; then
+    zero_ok=$((zero_ok + 1))
   else
     zero_ok=0
   fi
-  if [[ "${zero_ok}" -ge "${STABLE_ZERO_COUNT}" ]]; then
+
+  if [[ "${producer_alive}" == "0" && "${zero_ok}" -ge "${STABLE_ZERO_COUNT}" ]]; then
     break
   fi
+
   sleep "${POLL_INTERVAL}"
 done
 
-# stop logger + subscribers
-kill "${STAT_PID}" 2>/dev/null || true
-for pid in "${pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
+wait "${PROD_PID}" || {
+  echo "Producer failed. See ${RUN_DIR}/producer_stdout.log"
+  exit 1
+}
 
-# summarize (1 line metrics)
+kill "${STAT_PID}" 2>/dev/null || true
+for pid in "${pids[@]}"; do
+  kill "${pid}" 2>/dev/null || true
+done
+
 metrics="$(
   python3 "${SUMMARIZER}" \
     --run-dir "${RUN_DIR}" \
@@ -211,6 +240,7 @@ fi
 
 echo
 echo "DONE."
-echo "Run folder:  ${RUN_DIR}"
-echo "Run summary: ${RUN_SUM}"
-echo "Overall CSV: ${SUMMARY}"
+echo "Run folder:    ${RUN_DIR}"
+echo "Queue TS CSV:  ${TS_CSV}"
+echo "Run summary:   ${RUN_SUM}"
+echo "Overall CSV:   ${SUMMARY}"

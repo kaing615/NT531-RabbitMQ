@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-import argparse, json, os, time, uuid
+import argparse
+import json
+import os
+import time
+import uuid
+
 import pika
+
 
 def parse_args():
     p = argparse.ArgumentParser(description="RabbitMQ Fanout Producer Benchmark")
@@ -18,17 +24,27 @@ def parse_args():
     p.add_argument("--confirm", action="store_true")
     return p.parse_args()
 
+
 def main():
     args = parse_args()
+
     creds = pika.PlainCredentials(args.user, args.password)
     params = pika.ConnectionParameters(
-        host=args.host, port=args.port, credentials=creds,
-        heartbeat=30, blocked_connection_timeout=60
+        host=args.host,
+        port=args.port,
+        credentials=creds,
+        heartbeat=30,
+        blocked_connection_timeout=60,
     )
+
     conn = pika.BlockingConnection(params)
     ch = conn.channel()
 
-    ch.exchange_declare(exchange=args.exchange, exchange_type="fanout", durable=args.durable)
+    ch.exchange_declare(
+        exchange=args.exchange,
+        exchange_type="fanout",
+        durable=args.durable,
+    )
 
     if args.confirm:
         ch.confirm_delivery()
@@ -44,6 +60,7 @@ def main():
     t0 = time.perf_counter()
 
     confirm_fail = 0
+    published_ok = 0
 
     for i in range(args.messages):
         payload = {
@@ -54,12 +71,19 @@ def main():
         }
         body = json.dumps(payload).encode("utf-8")
 
-        if args.confirm:
-            ok = ch.basic_publish(exchange=args.exchange, routing_key="", body=body, properties=props)
-            if not ok:
-               confirm_fail += 1
-        else:
-            ch.basic_publish(exchange=args.exchange, routing_key="", body=body, properties=props)
+        try:
+            ch.basic_publish(
+                exchange=args.exchange,
+                routing_key="",
+                body=body,
+                properties=props,
+            )
+            published_ok += 1
+        except Exception:
+            if args.confirm:
+                confirm_fail += 1
+            else:
+                raise
 
         if interval > 0:
             next_send += interval
@@ -71,7 +95,7 @@ def main():
 
     t1 = time.perf_counter()
     dur = t1 - t0
-    thr = args.messages / dur if dur > 0 else 0.0
+    thr = published_ok / dur if dur > 0 else 0.0
 
     print("=== Fanout Producer Benchmark Result ===")
     print(f"host: {args.host}:{args.port}")
@@ -83,6 +107,7 @@ def main():
     print(f"rate_limit: {args.rate} msg/s (0 = unlimited)")
     print(f"run_id: {run_id}")
     print(f"duration_sec: {dur:.4f}")
+    print(f"published_ok: {published_ok}")
     print(f"throughput_msg_per_sec: {thr:.2f}")
     print(f"confirm_fail: {confirm_fail}")
 

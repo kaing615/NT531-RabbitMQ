@@ -70,8 +70,12 @@ for mode in "${MODES[@]}"; do
 
         cpu_log="${run_dir}/cpu_rabbit.log"
         mem_log="${run_dir}/mem_rabbit.log"
+        ts_csv="${run_dir}/queue_ts.csv"
+        producer_log="${run_dir}/producer_stdout.log"
 
-        q1="${QBASE}_1"; q2="${QBASE}_2"; q3="${QBASE}_3"
+        q1="${QBASE}_1"
+        q2="${QBASE}_2"
+        q3="${QBASE}_3"
         queues="${q1};${q2};${q3}"
 
         echo
@@ -82,6 +86,21 @@ for mode in "${MODES[@]}"; do
         purge_queue "${q3}"
 
         pids=()
+        stat_pid=""
+        prod_pid=""
+
+        cleanup_run() {
+          if [[ -n "${stat_pid}" ]]; then
+            kill "${stat_pid}" 2>/dev/null || true
+          fi
+          if [[ -n "${prod_pid}" ]]; then
+            kill "${prod_pid}" 2>/dev/null || true
+          fi
+          for pid in "${pids[@]:-}"; do
+            kill "${pid}" 2>/dev/null || true
+          done
+        }
+
         for i in 1 2 3; do
           q="${QBASE}_${i}"
           python3 "${SUBSCRIBER}" \
@@ -96,6 +115,7 @@ for mode in "${MODES[@]}"; do
         done
 
         sleep "${CPU_DELAY}"
+
         (
           while true; do
             docker stats --no-stream --format "{{.Name}} {{.CPUPerc}}" "${CONTAINER_NAME}" >> "${cpu_log}" || true
@@ -105,68 +125,86 @@ for mode in "${MODES[@]}"; do
         ) &
         stat_pid=$!
 
+        echo "ts_iso,ts_epoch,ready_total,unacked_total,total,producer_alive" > "${ts_csv}"
+
         set +e
-        producer_out="$(
-          python3 "${PRODUCER}" \
-            --host "${RABBIT_HOST}" --port "${RABBIT_PORT}" \
-            --user "${RABBIT_USER}" --password "${RABBIT_PASS}" \
-            --exchange "${EXCHANGE}" \
-            -n "${messages}" --payload-bytes "${size}" --rate "${rate}" \
-            ${PRODUCER_FLAGS} \
-            2>&1
-        )"
-        rc=$?
+        python3 "${PRODUCER}" \
+          --host "${RABBIT_HOST}" --port "${RABBIT_PORT}" \
+          --user "${RABBIT_USER}" --password "${RABBIT_PASS}" \
+          --exchange "${EXCHANGE}" \
+          -n "${messages}" --payload-bytes "${size}" --rate "${rate}" \
+          ${PRODUCER_FLAGS} \
+          > "${producer_log}" 2>&1 &
+        prod_pid=$!
         set -e
-        echo "${producer_out}" | tee "${run_dir}/producer_stdout.log" >/dev/null
-        confirm_fail="$(echo "${producer_out}" | awk -F': ' '/^confirm_fail:/ {print $2}' | tail -n1)"
-        confirm_fail="${confirm_fail:-0}"
-        if [[ "${rc}" -ne 0 ]]; then
-          echo "Producer failed rc=${rc}. See ${run_dir}/producer_stdout.log"
-          kill "${stat_pid}" 2>/dev/null || true
-          for pid in "${pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
-          continue
-        fi
 
         seen=0
         zero_ok=0
-
-        TS_CSV="${run_dir}/queue_ts.csv"
-        echo "ts_iso,ts_epoch,ready_total,unacked_total,total" > "${TS_CSV}"
 
         while true; do
           any=0
           all_r=0
           all_u=0
+
           for q in "${q1}" "${q2}" "${q3}"; do
             read -r r u < <(get_ready_unacked "${q}")
-            r="${r:-0}"; u="${u:-0}"
+            r="${r:-0}"
+            u="${u:-0}"
             all_r=$((all_r + r))
             all_u=$((all_u + u))
-            if [[ "${r}" != "0" || "${u}" != "0" ]]; then any=1; fi
+            if [[ "${r}" != "0" || "${u}" != "0" ]]; then
+              any=1
+            fi
           done
 
+          total=$((all_r + all_u))
           ts_iso="$(TZ=Asia/Ho_Chi_Minh date '+%Y-%m-%d %H:%M:%S')"
           ts_epoch="$(date +%s)"
-          total=$((all_r + all_u))
-          
-          echo "[${ts_iso}] ${run_tag} ready=${all_r} unacked=${all_u}"
-          echo "${ts_iso},${ts_epoch},${all_r},${all_u},${total}" >> "${TS_CSV}"
 
-          if [[ "${any}" == "1" ]]; then seen=1; fi
+          if kill -0 "${prod_pid}" 2>/dev/null; then
+            producer_alive=1
+          else
+            producer_alive=0
+          fi
 
-          if [[ "${seen}" == "1" && "${all_r}" == "0" && "${all_u}" == "0" ]]; then
-            zero_ok=$((zero_ok+1))
+          echo "[${ts_iso}] ${run_tag} ready=${all_r} unacked=${all_u} total=${total} producer_alive=${producer_alive}"
+          echo "${ts_iso},${ts_epoch},${all_r},${all_u},${total},${producer_alive}" >> "${ts_csv}"
+
+          if [[ "${any}" == "1" ]]; then
+            seen=1
+          fi
+
+          if [[ "${producer_alive}" == "0" && "${seen}" == "1" && "${all_r}" == "0" && "${all_u}" == "0" ]]; then
+            zero_ok=$((zero_ok + 1))
           else
             zero_ok=0
           fi
-          if [[ "${zero_ok}" -ge "${STABLE_ZERO_COUNT}" ]]; then
+
+          if [[ "${producer_alive}" == "0" && "${zero_ok}" -ge "${STABLE_ZERO_COUNT}" ]]; then
             break
           fi
+
           sleep "${POLL_INTERVAL}"
         done
 
+        set +e
+        wait "${prod_pid}"
+        rc=$?
+        set -e
+
+        confirm_fail="$(awk -F': ' '/^confirm_fail:/ {print $2}' "${producer_log}" | tail -n1)"
+        confirm_fail="${confirm_fail:-0}"
+
+        if [[ "${rc}" -ne 0 ]]; then
+          echo "Producer failed rc=${rc}. See ${producer_log}"
+          cleanup_run
+          continue
+        fi
+
         kill "${stat_pid}" 2>/dev/null || true
-        for pid in "${pids[@]}"; do kill "${pid}" 2>/dev/null || true; done
+        for pid in "${pids[@]}"; do
+          kill "${pid}" 2>/dev/null || true
+        done
 
         metrics="$(
           python3 "${SUMMARIZER}" \
@@ -178,7 +216,7 @@ for mode in "${MODES[@]}"; do
         )"
 
         echo "${mode},${rate},${M},${prefetch},${size},${metrics},${confirm_fail},${EXCHANGE},${queues},${run_tag}" \
-            >> "${RESULT_CSV}"
+          >> "${RESULT_CSV}"
 
       done
     done
