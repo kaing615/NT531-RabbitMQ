@@ -3,24 +3,44 @@ set -euo pipefail
 
 WORK_DIR="${WORK_DIR:-${HOME}/NT531-RabbitMQ/work-queue}"
 
-# ===== Thay đổi cho 2 Node =====
-CONTAINER_1="${CONTAINER_1:-rabbit-1}"
-CONTAINER_2="${CONTAINER_2:-rabbit-2}"
+# ===== Broker node (remote EC2) =====
+BROKER_SSH_HOST="${BROKER_SSH_HOST:-}"
+BROKER_SSH_USER="${BROKER_SSH_USER:-}"
+BROKER_CONTAINER="${BROKER_CONTAINER:-}"
 
-RABBIT_HOST="${RABBIT_HOST:-127.0.0.1}"
+if [[ -z "${BROKER_SSH_HOST}" || -z "${BROKER_SSH_USER}" || -z "${BROKER_CONTAINER}" ]]; then
+  echo "ERROR: Missing broker config."
+  echo "Please set:"
+  echo "  BROKER_SSH_HOST"
+  echo "  BROKER_SSH_USER"
+  echo "  BROKER_CONTAINER"
+  echo
+  echo "Example:"
+  echo "  BROKER_SSH_HOST=10.0.2.15 BROKER_SSH_USER=ubuntu BROKER_CONTAINER=rabbitmq ./run_workqueue_matrix.sh"
+  exit 1
+fi
+
+# ===== RabbitMQ connection for producer/workers =====
+RABBIT_HOST="${RABBIT_HOST:-}"
 RABBIT_PORT="${RABBIT_PORT:-5672}"
 RABBIT_USER="${RABBIT_USER:-admin}"
 RABBIT_PASS="${RABBIT_PASS:-admin123}"
+
+if [[ -z "${RABBIT_HOST}" ]]; then
+  echo "ERROR: Missing RABBIT_HOST"
+  echo "Example: RABBIT_HOST=10.0.2.15 ./run_workqueue_matrix.sh"
+  exit 1
+fi
 
 PRODUCER_PY="${PRODUCER_PY:-${WORK_DIR}/producer.py}"
 WORKER_RUNNER="${WORKER_RUNNER:-${WORK_DIR}/run_workers_until_drained.sh}"
 SUMMARIZER="${SUMMARIZER:-${WORK_DIR}/summarize_run.py}"
 
-# ===== matrix =====
+# ===== Matrix =====
 RATES=(${RATES:-500 1000 2000})
 WORKERS_LIST=(${WORKERS_LIST:-1 2 4})
 PREFETCH_LIST=(${PREFETCH_LIST:-1 5 10})
-SIZES=(${SIZES:-1024 10240})   # bytes
+SIZES=(${SIZES:-1024 10240})
 RUN_SECONDS="${RUN_SECONDS:-20}"
 SLEEP_MS="${SLEEP_MS:-20}"
 
@@ -28,7 +48,7 @@ CPU_DELAY="${CPU_DELAY:-3}"
 POLL_INTERVAL="${POLL_INTERVAL:-1}"
 STABLE_ZERO_COUNT="${STABLE_ZERO_COUNT:-3}"
 
-# ===== modes =====
+# ===== Modes =====
 # A: non-durable queue, non-persistent msg, confirms OFF
 # B: durable queue, persistent msg, confirms OFF
 # C: durable queue, persistent msg, confirms ON
@@ -39,14 +59,24 @@ OUT_ROOT="${OUT_ROOT:-${WORK_DIR}/results/${TS}}"
 RESULT_CSV="${RESULT_CSV:-${OUT_ROOT}/summary.csv}"
 mkdir -p "${OUT_ROOT}"
 
-# Đổi lệnh purge queue sang chạy qua docker exec trên Node 1
+remote_sh() {
+  ssh -o BatchMode=yes -o ConnectTimeout=5 "${BROKER_SSH_USER}@${BROKER_SSH_HOST}" "$@"
+}
+
+echo "== Check SSH to broker ${BROKER_SSH_USER}@${BROKER_SSH_HOST} =="
+remote_sh "hostname" >/dev/null
+
 purge_queue() {
   local q="$1"
-  sudo rabbitmqctl purge_queue "${q}" >/dev/null 2>&1 || true
+
+  # Ưu tiên purge qua docker exec trong container RabbitMQ
+  remote_sh "docker exec ${BROKER_CONTAINER} rabbitmqctl purge_queue ${q}" >/dev/null 2>&1 \
+    || remote_sh "rabbitmqctl purge_queue ${q}" >/dev/null 2>&1 \
+    || true
 }
 
 mode_cfg() {
-  # outputs: queue_durable producer_flags queue_name
+  # outputs: queue_durable|producer_flags|queue_name
   local mode="$1"
   local base="${QUEUE_BASE:-orders_queue}"
   case "${mode}" in
@@ -90,9 +120,7 @@ for mode in "${MODES[@]}"; do
 
           purge_queue "${queue_name}"
 
-          # 1) start workers + logger (wait drained)
-          # Truyền CONTAINER_1 và CONTAINER_2 thay vì CONTAINER_NAME
-          # 1) start workers + logger (wait drained)
+          # 1) start workers + logger (wait until queue drained)
           OUTPUT_DIR="${run_dir}" \
           CPU_LOG="${cpu_log}" \
           MEM_LOG="${mem_log}" \
@@ -104,6 +132,9 @@ for mode in "${MODES[@]}"; do
           RABBIT_PORT="${RABBIT_PORT}" \
           RABBIT_USER="${RABBIT_USER}" \
           RABBIT_PASS="${RABBIT_PASS}" \
+          BROKER_SSH_HOST="${BROKER_SSH_HOST}" \
+          BROKER_SSH_USER="${BROKER_SSH_USER}" \
+          BROKER_CONTAINER="${BROKER_CONTAINER}" \
           CPU_DELAY="${CPU_DELAY}" \
           POLL_INTERVAL="${POLL_INTERVAL}" \
           STABLE_ZERO_COUNT="${STABLE_ZERO_COUNT}" \
@@ -117,8 +148,10 @@ for mode in "${MODES[@]}"; do
           set +e
           producer_out="$(
             python3 "${PRODUCER_PY}" \
-              --host "${RABBIT_HOST}" --port "${RABBIT_PORT}" \
-              --user "${RABBIT_USER}" --password "${RABBIT_PASS}" \
+              --host "${RABBIT_HOST}" \
+              --port "${RABBIT_PORT}" \
+              --user "${RABBIT_USER}" \
+              --password "${RABBIT_PASS}" \
               --queue "${queue_name}" \
               -n "${messages}" \
               --payload-bytes "${size}" \
@@ -128,7 +161,9 @@ for mode in "${MODES[@]}"; do
           )"
           rc=$?
           set -e
+
           echo "${producer_out}" > "${run_dir}/producer_stdout.log"
+
           if [[ "${rc}" -ne 0 ]]; then
             echo "Producer failed rc=${rc}, skip. Check ${run_dir}/producer_stdout.log"
             kill "${workers_pid}" 2>/dev/null || true
